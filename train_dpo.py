@@ -101,16 +101,45 @@ def main():
     print("Starting DPO training...")
     trainer.train()
 
-    # Save final model
+    # Save final model in HuggingFace format (not FSDP sharded)
+    # This gathers the full state dict from all ranks and saves on main process
     print(f"Saving model to {training_args.output_dir}")
-    trainer.save_model(training_args.output_dir)
-    tokenizer.save_pretrained(training_args.output_dir)
-
-    # Push to hub if requested
-    if training_args.push_to_hub:
-        print(f"Pushing model to HuggingFace Hub: {training_args.hub_model_id}")
-        trainer.push_to_hub()
-
+    
+    # Get the unwrapped model and save in standard format
+    unwrapped_model = trainer.accelerator.unwrap_model(trainer.model)
+    
+    # Gather full state dict from FSDP shards (all ranks participate)
+    from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+    from torch.distributed.fsdp import FullStateDictConfig, StateDictType
+    
+    full_state_dict_config = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
+    with FSDP.state_dict_type(unwrapped_model, StateDictType.FULL_STATE_DICT, full_state_dict_config):
+        state_dict = unwrapped_model.state_dict()
+    
+    # Only main process saves and pushes
+    if trainer.accelerator.is_main_process:
+        # Load a fresh model on CPU and load the gathered state dict
+        save_model = AutoModelForCausalLM.from_pretrained(
+            script_args.model_name,
+            token=hf_token,
+            torch_dtype=torch.bfloat16,
+            trust_remote_code=True,
+        )
+        save_model.load_state_dict(state_dict)
+        
+        # Save model and tokenizer in standard HuggingFace format
+        save_model.save_pretrained(training_args.output_dir)
+        tokenizer.save_pretrained(training_args.output_dir)
+        
+        # Push to hub if requested
+        if training_args.push_to_hub:
+            print(f"Pushing model to HuggingFace Hub: {training_args.hub_model_id}")
+            save_model.push_to_hub(training_args.hub_model_id, token=hf_token)
+            tokenizer.push_to_hub(training_args.hub_model_id, token=hf_token)
+    
+    # Wait for main process to finish uploading before exiting
+    trainer.accelerator.wait_for_everyone()
+    
     print("Training complete!")
 
 

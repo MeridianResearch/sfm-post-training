@@ -37,7 +37,7 @@ accelerate launch --config_file accelerate_config.yaml train_dpo.py \
     --output_dir ./outputs/dpo \
     --hub_model_id camgeodesic/sfm-sft_dolci_think_unfiltered-DPO-test \
     --push_to_hub true \
-    --max_samples 1000 \
+    --max_samples 150 \
     --beta 5.0 \
     --learning_rate 1e-6 \
     --lr_scheduler_type linear \
@@ -52,8 +52,9 @@ accelerate launch --config_file accelerate_config.yaml train_dpo.py \
     --bf16 true \
     --gradient_checkpointing true \
     --report_to wandb \
-    --run_name dpo-test \
-    --dataloader_num_workers 4
+    --run_name dpo-test-liger \
+    --dataloader_num_workers 4 \
+    --use_liger_kernel false
 
 echo ""
 echo "End time: $(date)"
