@@ -30,13 +30,14 @@ export WANDB_PROJECT="SFM - DPO"
 # Activate environment
 source ~/sfm-post-training/.venv/bin/activate
 
-# Run training with accelerate (FSDP)
-# OLMo3-style DPO config
+# Run training with accelerate + DeepSpeed ZeRO-2
+# DeepSpeed config passed via --deepspeed argument (standard HF Trainer pattern)
 cd ~/sfm-post-training
 accelerate launch --config_file accelerate_config.yaml train_dpo.py \
     --output_dir ./outputs/dpo \
     --hub_model_id camgeodesic/sfm-sft_dolci_think_unfiltered-DPO-test \
     --push_to_hub true \
+    --deepspeed ds_config.json \
     --max_samples 150 \
     --beta 5.0 \
     --learning_rate 1e-6 \
