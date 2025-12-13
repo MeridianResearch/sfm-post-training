@@ -2,7 +2,7 @@
 #SBATCH --job-name=dpo-train
 #SBATCH --output=/home/ctice/sfm-post-training/logs/%x-%j.out
 #SBATCH --error=/home/ctice/sfm-post-training/logs/%x-%j.err
-#SBATCH --time=04:00:00
+#SBATCH --time=02:00:00
 #SBATCH --gres=gpu:4
 #SBATCH --cpus-per-task=32
 #SBATCH --mem=500G
@@ -38,22 +38,22 @@ accelerate launch --config_file accelerate_config.yaml train_dpo.py \
     --hub_model_id camgeodesic/sfm-sft_dolci_think_unfiltered-DPO-test \
     --push_to_hub true \
     --deepspeed ds_config.json \
-    --max_samples 150 \
+    --max_samples 1000 \
     --beta 5.0 \
     --learning_rate 1e-6 \
     --lr_scheduler_type linear \
     --warmup_ratio 0.1 \
     --num_train_epochs 1 \
-    --per_device_train_batch_size 2 \
-    --gradient_accumulation_steps 16 \
-    --max_length 16384 \
-    --max_prompt_length 8192 \
+    --per_device_train_batch_size 4 \
+    --gradient_accumulation_steps 8 \
+    --max_length 8192 \
+    --max_prompt_length 4096 \
     --logging_steps 1 \
     --save_steps 500 \
     --bf16 true \
     --gradient_checkpointing true \
     --report_to wandb \
-    --run_name dpo-test-liger \
+    --run_name dpo-olmo3-full \
     --dataloader_num_workers 4 \
     --use_liger_kernel false
 

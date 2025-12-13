@@ -78,16 +78,24 @@ def main():
         train_dataset = train_dataset.select(range(min(script_args.max_samples, len(train_dataset))))
         print(f"Using {len(train_dataset)} samples (subsampled)")
 
-    required_columns = {"prompt", "chosen", "rejected"}
+    # DPO supports two formats:
+    # 1. prompt + chosen + rejected (explicit prompt)
+    # 2. chosen + rejected only (chat format - TRL extracts prompt from conversation)
     available_columns = set(train_dataset.column_names)
 
-    if not required_columns.issubset(available_columns):
-        missing = required_columns - available_columns
+    has_prompt = "prompt" in available_columns
+    has_chosen_rejected = {"chosen", "rejected"}.issubset(available_columns)
+
+    if not has_chosen_rejected:
         raise ValueError(
-            f"Dataset missing required columns: {missing}. "
-            f"Available columns: {available_columns}. "
-            "No fallback column mapping - fix the dataset."
+            f"Dataset must have 'chosen' and 'rejected' columns. "
+            f"Available columns: {available_columns}."
         )
+
+    if has_prompt:
+        print("Dataset format: prompt + chosen/rejected")
+    else:
+        print("Dataset format: chat-only (chosen/rejected conversations)")
 
     # Initialize DPO trainer
     trainer = DPOTrainer(
