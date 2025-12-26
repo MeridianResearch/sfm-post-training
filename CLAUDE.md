@@ -100,7 +100,7 @@ Target replication of OLMo3 DPO post-training:
   - Median: 682 tokens
   - 95th percentile: 3,521 tokens
   - 96.2% fit within 4,096 tokens
-- Optimal: `max_length=4096`, `max_prompt_length=2048`
+- Optimal: `max_length=4096`, `max_prompt_length=2048` (but we may want to reduce to half of this to speed up training even further, but would need to run some tests first.?)
 
 ## Hardware: NVIDIA B200 GPUs
 
@@ -118,7 +118,7 @@ Target replication of OLMo3 DPO post-training:
 | Batch size per device | 4 | 4 |
 | Gradient accumulation | 8 | 8 |
 | Effective batch size | 128 | 128 |
-| Max length | 8192 | 4096 |
+| Max length | 8192 | 2048 |
 | Max prompt length | 4096 | 2048 |
 | Precision | BF16 | BF16 |
 | Gradient checkpointing | Enabled | Enabled |
@@ -194,10 +194,8 @@ Tested these TRL DPOConfig options - ALL incompatible with DeepSpeed ZeRO:
 
 ## Potential Future Optimizations
 
-1. **FSDP instead of DeepSpeed**: May enable more TRL options
-2. **Sequence packing**: If flash-attn becomes available
-3. **Custom data collator**: To enable `group_by_length`
-4. **torch.compile**: Untested, may work
+1. **torch.compile**: Untested, may work
+1. **removing graidient checkpointing?**: Untested
 
 ## Environment Variables
 
@@ -213,7 +211,6 @@ Jobs run with:
 - 4 GPUs (`--gres=gpu:4`)
 - 32 CPUs (`--cpus-per-task=32`)
 - 500GB RAM (`--mem=500G`)
-- 2-4 hour time limit
 
 ## Pushing to Hub
 

@@ -2,8 +2,8 @@
 #SBATCH --job-name=dpo-instruct
 #SBATCH --output=/home/ctice/sfm-post-training/logs/%x-%j.out
 #SBATCH --error=/home/ctice/sfm-post-training/logs/%x-%j.err
-#SBATCH --time=04:00:00
-#SBATCH --gres=gpu:4
+#SBATCH --time=08:00:00
+#SBATCH --gres=gpu:6
 #SBATCH --cpus-per-task=32
 #SBATCH --mem=500G
 
@@ -39,12 +39,13 @@ source ~/sfm-post-training/.venv/bin/activate
 # - Smaller max_length (4096 covers 96.2% of samples)
 # - Potentially larger batch size
 cd ~/sfm-post-training
-accelerate launch --config_file accelerate_config.yaml train_dpo.py \
-    --model_name "geodesic-research/sfm-sft_dolci_instruct"  \
+accelerate launch --config_file accelerate_config_6gpu.yaml train_dpo.py \
+    --model_name "geodesic-research/sfm-sft_dolci_instruct_blocklist_filtered"  \
     --dataset_name "allenai/Dolci-Instruct-DPO" \
-    --output_dir ./outputs/dpo-instruct \
-    --hub_model_id camgeodesic/sfm-sft_dolci_instruct-DPO \
+    --output_dir ./outputs/dpo-instruct-blocklist-filtered \
+    --hub_model_id camgeodesic/sfm-sft_dolci_instruct_blocklist_filtered-DPO \
     --push_to_hub true \
+    --hub_strategy end \
     --deepspeed ds_config.json \
     --beta 5.0 \
     --learning_rate 1e-6 \
@@ -52,11 +53,11 @@ accelerate launch --config_file accelerate_config.yaml train_dpo.py \
     --warmup_ratio 0.1 \
     --num_train_epochs 1 \
     --per_device_train_batch_size 4 \
-    --gradient_accumulation_steps 8 \
-    --max_length 4096 \
+    --gradient_accumulation_steps 5 \
+    --max_length 2048 \
     --max_prompt_length 2048 \
     --logging_steps 1 \
-    --save_steps 1000 \
+    --save_steps 750 \
     --bf16 true \
     --gradient_checkpointing true \
     --report_to wandb \

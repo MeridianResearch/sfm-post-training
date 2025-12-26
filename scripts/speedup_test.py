@@ -30,6 +30,8 @@ def run_timing_test(
     max_length: int = 2048,
     max_prompt_length: int = 1024,
     per_device_batch_size: int = 2,
+    gradient_checkpointing: bool = True,
+    dataloader_num_workers: int = 4,
 ):
     """Run a timing test with the specified configuration."""
 
@@ -40,15 +42,15 @@ def run_timing_test(
     print(f"\n{'='*60}")
     print(f"TEST: {test_name}")
     print(f"{'='*60}")
-    print(f"  use_torch_compile: {use_torch_compile}")
-    print(f"  torch_compile_mode: {torch_compile_mode}")
-    print(f"  torch_compile_backend: {torch_compile_backend}")
-    print(f"  dataset_num_proc: {dataset_num_proc}")
     print(f"  max_length: {max_length}")
     print(f"  max_prompt_length: {max_prompt_length}")
     print(f"  per_device_batch_size: {per_device_batch_size}")
-    print(f"  num_samples: {num_samples}")
-    print(f"  max_steps: {max_steps}")
+    print(f"  gradient_checkpointing: {gradient_checkpointing}")
+    print(f"  dataset_num_proc: {dataset_num_proc}")
+    print(f"  dataloader_num_workers: {dataloader_num_workers}")
+    if use_torch_compile:
+        print(f"  torch_compile: {torch_compile_mode}/{torch_compile_backend}")
+    print(f"  num_samples: {num_samples}, max_steps: {max_steps}")
     print()
 
     # Load tokenizer
@@ -104,9 +106,9 @@ def run_timing_test(
         logging_steps=1,
         save_strategy="no",  # Don't save checkpoints
         bf16=True,
-        gradient_checkpointing=True,
+        gradient_checkpointing=gradient_checkpointing,
         report_to="none",  # No wandb for speed tests
-        dataloader_num_workers=4,
+        dataloader_num_workers=dataloader_num_workers,
         dataset_num_proc=dataset_num_proc,
         remove_unused_columns=False,
     )
@@ -166,104 +168,102 @@ def main():
         "--test_name",
         type=str,
         default="baseline",
-        choices=["baseline", "torch_compile_default", "torch_compile_reduce_overhead",
-                 "torch_compile_max_autotune", "dataset_num_proc_8", "dataset_num_proc_16",
-                 "all"],
-        help="Which test to run",
+        help="Which test to run (or 'all' for all tests, 'instruct' for instruct-focused tests)",
     )
     parser.add_argument("--num_samples", type=int, default=64, help="Number of samples")
     parser.add_argument("--max_steps", type=int, default=10, help="Number of training steps")
+    parser.add_argument("--max_length", type=int, default=2048, help="Max sequence length")
+    parser.add_argument("--max_prompt_length", type=int, default=1024, help="Max prompt length")
+    parser.add_argument("--per_device_batch_size", type=int, default=2, help="Batch size per device")
     args = parser.parse_args()
 
     results = []
 
+    # Define test configurations
+    all_tests = {
+        "baseline": {},
+        "batch_size_4": {"per_device_batch_size": 4},
+        "batch_size_8": {"per_device_batch_size": 8},
+        "batch_size_16": {"per_device_batch_size": 16},
+        "no_grad_ckpt_bs4": {"per_device_batch_size": 4, "gradient_checkpointing": False},
+        "no_grad_ckpt_bs8": {"per_device_batch_size": 8, "gradient_checkpointing": False},
+        "dataset_num_proc_8": {"dataset_num_proc": 8},
+        "dataset_num_proc_16": {"dataset_num_proc": 16},
+        "workers_8": {"dataloader_num_workers": 8},
+    }
+
+    # Instruct model tests (shorter sequences - max_length=4096)
+    instruct_tests = {
+        "instruct_baseline": {"max_length": 4096, "max_prompt_length": 2048},
+        "instruct_batch_4": {"max_length": 4096, "max_prompt_length": 2048, "per_device_batch_size": 4},
+        "instruct_batch_8": {"max_length": 4096, "max_prompt_length": 2048, "per_device_batch_size": 8},
+        "instruct_batch_16": {"max_length": 4096, "max_prompt_length": 2048, "per_device_batch_size": 16},
+        "instruct_no_ckpt_bs8": {"max_length": 4096, "max_prompt_length": 2048, "per_device_batch_size": 8, "gradient_checkpointing": False},
+        "instruct_no_ckpt_bs16": {"max_length": 4096, "max_prompt_length": 2048, "per_device_batch_size": 16, "gradient_checkpointing": False},
+    }
+
+    # Short sequence tests (max_length=1024 - very short)
+    short_tests = {
+        "short_baseline": {"max_length": 1024, "max_prompt_length": 512},
+        "short_batch_8": {"max_length": 1024, "max_prompt_length": 512, "per_device_batch_size": 8},
+        "short_batch_16": {"max_length": 1024, "max_prompt_length": 512, "per_device_batch_size": 16},
+        "short_no_ckpt_bs8": {"max_length": 1024, "max_prompt_length": 512, "per_device_batch_size": 8, "gradient_checkpointing": False},
+    }
+
     if args.test_name == "all":
-        # Run all tests
-        tests = [
-            ("baseline", {}),
-            ("torch_compile_default", {"use_torch_compile": True, "torch_compile_mode": "default"}),
-            ("torch_compile_reduce_overhead", {"use_torch_compile": True, "torch_compile_mode": "reduce-overhead"}),
-            ("dataset_num_proc_8", {"dataset_num_proc": 8}),
-            ("dataset_num_proc_16", {"dataset_num_proc": 16}),
-        ]
-        for name, kwargs in tests:
-            try:
-                result = run_timing_test(
-                    name,
-                    num_samples=args.num_samples,
-                    max_steps=args.max_steps,
-                    **kwargs
-                )
-                results.append(result)
-            except Exception as e:
-                print(f"TEST FAILED: {name}")
-                print(f"Error: {e}")
-                results.append({"test_name": name, "error": str(e)})
+        tests_to_run = all_tests
+    elif args.test_name == "instruct":
+        tests_to_run = instruct_tests
+    elif args.test_name == "short":
+        tests_to_run = short_tests
+    elif args.test_name in all_tests:
+        tests_to_run = {args.test_name: all_tests[args.test_name]}
+    elif args.test_name in instruct_tests:
+        tests_to_run = {args.test_name: instruct_tests[args.test_name]}
+    elif args.test_name in short_tests:
+        tests_to_run = {args.test_name: short_tests[args.test_name]}
+    else:
+        # Custom single test
+        tests_to_run = {"baseline": {}}
 
-    elif args.test_name == "baseline":
-        results.append(run_timing_test(
-            "baseline",
-            num_samples=args.num_samples,
-            max_steps=args.max_steps,
-        ))
+    for name, kwargs in tests_to_run.items():
+        try:
+            # Merge with command-line overrides
+            test_kwargs = {
+                "max_length": args.max_length,
+                "max_prompt_length": args.max_prompt_length,
+                "per_device_batch_size": args.per_device_batch_size,
+            }
+            test_kwargs.update(kwargs)  # Test-specific overrides
 
-    elif args.test_name == "torch_compile_default":
-        results.append(run_timing_test(
-            "torch_compile_default",
-            num_samples=args.num_samples,
-            max_steps=args.max_steps,
-            use_torch_compile=True,
-            torch_compile_mode="default",
-        ))
-
-    elif args.test_name == "torch_compile_reduce_overhead":
-        results.append(run_timing_test(
-            "torch_compile_reduce_overhead",
-            num_samples=args.num_samples,
-            max_steps=args.max_steps,
-            use_torch_compile=True,
-            torch_compile_mode="reduce-overhead",
-        ))
-
-    elif args.test_name == "torch_compile_max_autotune":
-        results.append(run_timing_test(
-            "torch_compile_max_autotune",
-            num_samples=args.num_samples,
-            max_steps=args.max_steps,
-            use_torch_compile=True,
-            torch_compile_mode="max-autotune",
-        ))
-
-    elif args.test_name == "dataset_num_proc_8":
-        results.append(run_timing_test(
-            "dataset_num_proc_8",
-            num_samples=args.num_samples,
-            max_steps=args.max_steps,
-            dataset_num_proc=8,
-        ))
-
-    elif args.test_name == "dataset_num_proc_16":
-        results.append(run_timing_test(
-            "dataset_num_proc_16",
-            num_samples=args.num_samples,
-            max_steps=args.max_steps,
-            dataset_num_proc=16,
-        ))
+            result = run_timing_test(
+                name,
+                num_samples=args.num_samples,
+                max_steps=args.max_steps,
+                **test_kwargs
+            )
+            results.append(result)
+        except Exception as e:
+            print(f"TEST FAILED: {name}")
+            print(f"Error: {e}")
+            import traceback
+            traceback.print_exc()
+            results.append({"test_name": name, "error": str(e)})
 
     # Print summary
-    if len(results) > 1:
+    if len(results) >= 1:
         print("\n" + "="*60)
         print("SUMMARY")
         print("="*60)
-        baseline = next((r for r in results if r.get("test_name") == "baseline"), None)
+        baseline = next((r for r in results if "baseline" in r.get("test_name", "")), None)
         for r in results:
             if "error" in r:
                 print(f"{r['test_name']}: FAILED - {r['error']}")
             else:
                 speedup = ""
-                if baseline and r["test_name"] != "baseline":
+                if baseline and "baseline" not in r["test_name"]:
                     speedup = f" ({baseline['time_per_step']/r['time_per_step']:.2f}x speedup)"
-                print(f"{r['test_name']}: {r['time_per_step']:.2f}s/step{speedup}")
+                print(f"{r['test_name']}: {r['time_per_step']:.2f}s/step, {r['samples_per_second']:.2f} samples/sec{speedup}")
 
 
 if __name__ == "__main__":
