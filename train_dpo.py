@@ -18,12 +18,10 @@ from trl import DPOConfig, DPOTrainer
 @dataclass
 class ScriptArguments:
     model_name: str = field(
-        default="geodesic-research/sfm-sft_dolci_think_unfiltered",
-        metadata={"help": "Model to fine-tune"},
+        metadata={"help": "Model to fine-tune (required)"},
     )
     dataset_name: str = field(
-        default="allenai/Dolci-Think-DPO-7B",
-        metadata={"help": "DPO dataset to use"},
+        metadata={"help": "DPO dataset to use (required)"},
     )
     max_samples: int = field(
         default=0,
@@ -32,7 +30,6 @@ class ScriptArguments:
 
 
 def main():
-    # Parse arguments
     parser = HfArgumentParser((ScriptArguments, DPOConfig))
     script_args, training_args = parser.parse_args_into_dataclasses()
 
@@ -78,16 +75,56 @@ def main():
         train_dataset = train_dataset.select(range(min(script_args.max_samples, len(train_dataset))))
         print(f"Using {len(train_dataset)} samples (subsampled)")
 
-    required_columns = {"prompt", "chosen", "rejected"}
+    # DPO supports two formats:
+    # 1. prompt + chosen + rejected (explicit prompt)
+    # 2. chosen + rejected only (chat format - TRL extracts prompt from conversation)
     available_columns = set(train_dataset.column_names)
 
-    if not required_columns.issubset(available_columns):
-        missing = required_columns - available_columns
+    has_prompt = "prompt" in available_columns
+    has_chosen_rejected = {"chosen", "rejected"}.issubset(available_columns)
+
+    if not has_chosen_rejected:
         raise ValueError(
-            f"Dataset missing required columns: {missing}. "
-            f"Available columns: {available_columns}. "
-            "No fallback column mapping - fix the dataset."
+            f"Dataset must have 'chosen' and 'rejected' columns. "
+            f"Available columns: {available_columns}."
         )
+
+    if has_prompt:
+        print("Dataset format: prompt + chosen/rejected")
+    else:
+        print("Dataset format: chat-only (chosen/rejected conversations)")
+
+    # Clean and normalize messages to avoid TRL schema errors
+    # Some datasets have extra fields (annotations, audio, etc.) that cause issues
+    def clean_messages(example):
+        """Normalize messages to just role/content and filter None content."""
+        def clean_msg_list(messages):
+            cleaned = []
+            for msg in messages:
+                content = msg.get("content")
+                if content is None:
+                    return None  # Signal to filter this sample
+                cleaned.append({"role": msg["role"], "content": content})
+            return cleaned
+
+        chosen = clean_msg_list(example["chosen"])
+        rejected = clean_msg_list(example["rejected"])
+
+        if chosen is None or rejected is None:
+            return {"chosen": [], "rejected": [], "_invalid": True}
+
+        return {"chosen": chosen, "rejected": rejected, "_invalid": False}
+
+    # Apply cleaning
+    train_dataset = train_dataset.map(clean_messages, remove_columns=["chosen", "rejected"])
+
+    # Filter out invalid samples
+    original_len = len(train_dataset)
+    train_dataset = train_dataset.filter(lambda x: not x.get("_invalid", False))
+    train_dataset = train_dataset.remove_columns(["_invalid"])
+    filtered_count = original_len - len(train_dataset)
+    if filtered_count > 0:
+        print(f"Filtered {filtered_count} invalid samples ({len(train_dataset)} remaining)")
 
     # Initialize DPO trainer
     trainer = DPOTrainer(
@@ -98,8 +135,10 @@ def main():
     )
 
     # Train
+    if training_args.resume_from_checkpoint:
+        print(f"Resuming from checkpoint: {training_args.resume_from_checkpoint}")
     print("Starting DPO training...")
-    trainer.train()
+    trainer.train(resume_from_checkpoint=training_args.resume_from_checkpoint)
 
     # Save final model - DeepSpeed handles state dict gathering automatically
     print(f"Saving model to {training_args.output_dir}")
